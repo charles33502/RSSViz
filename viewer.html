@@ -1,0 +1,464 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#15171b; --panel:rgba(30,33,40,.92); --fg:#e6e6e6; --muted:#9aa0aa; --line:#3a3f4a; --acc:#ff6b4a; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+              font:13px/1.4 system-ui,-apple-system,"Segoe UI","Noto Sans TC","Microsoft JhengHei",sans-serif; overflow:hidden; }
+  #wrap { position:relative; width:100%; height:100%; outline:none; }
+  canvas { display:block; }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  #timebar { left:10px; right:10px; bottom:10px; display:flex; gap:8px; align-items:center; }
+  #timebar input[type=range] { flex:1; accent-color:var(--acc); }
+  #tlabel { min-width:250px; font-variant-numeric:tabular-nums; color:var(--muted); }
+  button, select { background:#262a33; color:var(--fg); border:1px solid var(--line); border-radius:6px;
+                   padding:3px 8px; cursor:pointer; font:inherit; }
+  button:hover { border-color:#6b7280; }
+  #cam { right:10px; top:10px; width:150px; }
+  #cam .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin-bottom:6px; }
+  #cam .grid button { padding:4px 0; }
+  #cam .row { display:flex; gap:4px; margin-bottom:4px; }
+  #cam .row button { flex:1; padding:3px 0; }
+  .ttl { color:var(--muted); font-size:12px; margin:2px 0 4px; }
+  #legend { left:10px; top:10px; max-height:calc(100% - 90px); overflow:auto; min-width:230px; max-width:330px; }
+  #legend label { display:flex; align-items:center; gap:6px; white-space:nowrap; cursor:pointer; }
+  #legend .sw { width:11px; height:11px; border-radius:2px; flex:none; }
+  #legend .sum { margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; padding-left:8px; }
+  #legend details > summary { cursor:pointer; color:var(--muted); margin:4px 0; }
+  #cbar { right:10px; bottom:62px; width:150px; }
+  #cbar .grad { height:10px; border-radius:3px; background:linear-gradient(90deg,#30123b,#4686fb,#1ae4b6,#a2fc3c,#fabb39,#e4460a,#7a0403); }
+  #cbar .ticks { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; }
+  #tip { position:absolute; pointer-events:none; display:none; background:rgba(0,0,0,.85); border:1px solid var(--line);
+         border-radius:6px; padding:6px 8px; font-size:12px; white-space:nowrap; }
+  #help { color:var(--muted); font-size:11px; line-height:1.5; }
+  #rec.on { background:#7a1f14; border-color:var(--acc); font-variant-numeric:tabular-nums; }
+  #err { position:absolute; left:50%; top:40%; transform:translate(-50%,-50%); color:#f88; display:none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="wrap" tabindex="0">
+  <div id="legend" class="panel"></div>
+  <div id="cam" class="panel">
+    <div class="ttl">平移</div>
+    <div class="grid">
+      <span></span><button data-pan="up" title="上移（↑）">↑</button><span></span>
+      <button data-pan="left" title="左移（←）">←</button><button data-act="focus" title="對準接觸點（C）">◎</button><button data-pan="right" title="右移（→）">→</button>
+      <span></span><button data-pan="down" title="下移（↓）">↓</button><span></span>
+    </div>
+    <div class="ttl">縮放 · 旋轉 · 高度</div>
+    <div class="row"><button data-act="in" title="拉近（+ 或 W）">＋</button><button data-act="out" title="拉遠（− 或 S）">－</button></div>
+    <div class="row"><button data-act="rotl" title="向左繞（Q）">⟲</button><button data-act="rotr" title="向右繞（E）">⟳</button></div>
+    <div class="row"><button data-act="tiltu" title="往上看（R）">⤒ 俯</button><button data-act="tiltd" title="往下看（F）">⤓ 仰</button></div>
+    <div class="ttl">視角</div>
+    <div class="row"><button data-view="front">正面</button><button data-view="side">側面</button></div>
+    <div class="row"><button data-view="top">俯視</button><button data-view="iso">斜角</button></div>
+    <div class="row"><button data-act="all" title="看整個場景">全場景</button></div>
+    <div id="help">左鍵拖曳：旋轉<br>右鍵 / Shift+拖曳：平移<br>滾輪：縮放<br>鍵盤：方向鍵平移、W/S 縮放、Q/E 繞轉、R/F 俯仰、空白鍵播放、, . 逐步、V 錄影</div>
+  </div>
+  <div id="cbar" class="panel"><div class="ttl">單點法向力 [N]</div><div class="grad"></div><div class="ticks"><span>0</span><span id="cmid"></span><span id="cmax"></span></div></div>
+  <div id="timebar" class="panel">
+    <button id="play" title="播放 / 暫停（空白鍵）">▶</button>
+    <button id="prev" title="上一步（,）">◀</button><button id="next" title="下一步（.）">▶|</button>
+    <select id="speed" title="播放速度"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    <button id="rec" title="輸出 MP4：從目前這一格到最後，依目前的播放速度與視角逐格輸出（30 fps，可直接放進 PowerPoint），完成後自動下載；進行中再按一次提早結束（V）">⏺ 錄影</button>
+    <input id="slider" type="range" min="0" value="0" step="1">
+    <span id="tlabel"></span>
+  </div>
+  <div id="tip"></div>
+  <div id="err">3D 檢視器載入失敗：需要連網讀取 three.js（cdn.jsdelivr.net）。</div>
+</div>
+<script>window.__RSS__ = __DATA__;</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const D = window.__RSS__, OPT = D.opt, C = D.contacts, N = D.t.length;
+const wrap = document.getElementById("wrap");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+wrap.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x15171b);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.005, 50);
+camera.up.set(0, 0, 1);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.12;
+controls.screenSpacePanning = true;
+controls.keyPanSpeed = 14;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1.5, -2, 3); scene.add(sun);
+const grid = new THREE.GridHelper(4, 40, 0x333842, 0x24272e); grid.rotation.x = Math.PI / 2; scene.add(grid);
+
+// ---------------------------------------------------------------- scene meshes
+const GROUP_COLOR = { "左臂": 0xd9d9d9, "右臂": 0xd9d9d9, "左臂底座": 0x9a9a9a, "右臂底座": 0x9a9a9a,
+  "左手指": 0x6b6b78, "右手指": 0x6b6b78, "立柱": 0x3a3a3a, "table": 0x2f6577, "(世界/地面)": 0x444444 };
+const OBJ = [0xe8a33d, 0x3d6fe8, 0xb04ad6, 0x3dbb6a, 0xe85d3d, 0x8c6d46];
+const groupObjs = {}, bodies = {};
+let objN = 0;
+const colorOf = g => (g in GROUP_COLOR) ? GROUP_COLOR[g] : (GROUP_COLOR[g] = OBJ[objN++ % OBJ.length]);
+const sceneBox = new THREE.Box3();
+for (const m of D.meshes) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(m.v, 3));
+  geo.setIndex(m.f);
+  geo.computeVertexNormals();
+  const op = OPT.opacity * (m.group === "table" ? 0.45 : 1);
+  const mat = new THREE.MeshStandardMaterial({ color: colorOf(m.group), roughness: 0.7, metalness: 0.05,
+    flatShading: true, transparent: op < 0.999, opacity: op, depthWrite: op >= 0.999, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  let parent = scene;
+  if (m.body >= 0) {
+    if (!bodies[m.body]) { bodies[m.body] = new THREE.Group(); scene.add(bodies[m.body]); }
+    parent = bodies[m.body];
+  }
+  parent.add(mesh);
+  (groupObjs[m.group] = groupObjs[m.group] || []).push(mesh);
+}
+
+// ---------------------------------------------------------------- contacts
+let maxPts = 1;
+for (let k = 0; k < N; k++) maxPts = Math.max(maxPts, C.offsets[k + 1] - C.offsets[k]);
+const dots = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 14, 10),
+  new THREE.MeshBasicMaterial({ color: 0xffffff }), maxPts);
+dots.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+dots.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(maxPts * 3), 3);
+scene.add(dots);
+const arrowPos = new Float32Array(maxPts * 6);
+const arrowGeo = new THREE.BufferGeometry();
+arrowGeo.setAttribute("position", new THREE.BufferAttribute(arrowPos, 3));
+const arrows = new THREE.LineSegments(arrowGeo, new THREE.LineBasicMaterial({ color: 0xff5040 }));
+scene.add(arrows);
+const pairOn = C.pairs.map(() => true);
+const cmax = D.cmax;
+document.getElementById("cmax").textContent = cmax.toFixed(1);
+document.getElementById("cmid").textContent = (cmax / 2).toFixed(1);
+
+function turbo(x) {  // Google turbo, polynomial fit
+  x = Math.min(1, Math.max(0, x));
+  const r = 0.13572138 + x * (4.61539260 + x * (-42.66032258 + x * (132.13108234 + x * (-152.94239396 + x * 59.28637943))));
+  const g = 0.09140261 + x * (2.19418839 + x * (4.84296658 + x * (-14.18503333 + x * (4.27729857 + x * 2.82956604))));
+  const b = 0.10667330 + x * (12.64194608 + x * (-60.58204836 + x * (110.36276771 + x * (-89.90310912 + x * 27.34824973))));
+  return [r, g, b].map(v => Math.min(1, Math.max(0, v)));
+}
+
+// ---------------------------------------------------------------- legend
+const legend = document.getElementById("legend");
+const sumSpans = [];
+function hex(c) { return "#" + c.toString(16).padStart(6, "0"); }
+function buildLegend() {
+  let h = `<div class="ttl">場景（點選顯示 / 隱藏）</div>`;
+  for (const g of Object.keys(groupObjs))
+    h += `<label><input type="checkbox" data-g="${g}" checked><span class="sw" style="background:${hex(colorOf(g))}"></span>${g}</label>`;
+  h += `<details open><summary>接觸：受力方 ← 施力方（Σ 法向力，這一刻）</summary>`;
+  C.pairs.forEach((p, i) => { h += `<label><input type="checkbox" data-p="${i}" checked>${p}<span class="sum" id="sum${i}"></span></label>`; });
+  h += `</details>`;
+  legend.innerHTML = h;
+  legend.querySelectorAll("input[data-g]").forEach(el => el.onchange = () => groupObjs[el.dataset.g].forEach(m => m.visible = el.checked));
+  legend.querySelectorAll("input[data-p]").forEach(el => el.onchange = () => { pairOn[+el.dataset.p] = el.checked; setFrame(frame); });
+  C.pairs.forEach((p, i) => sumSpans[i] = document.getElementById("sum" + i));
+}
+buildLegend();
+
+// ---------------------------------------------------------------- frames
+const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(), S = new THREE.Vector3();
+let frame = 0, shown = [], curSums = [];
+const slider = document.getElementById("slider"), tlabel = document.getElementById("tlabel");
+slider.max = N - 1;
+function setFrame(k) {
+  frame = Math.max(0, Math.min(N - 1, k));
+  slider.value = frame;
+  for (const b in bodies) {
+    const a = D.poses[b], o = frame * 7;
+    bodies[b].position.set(a[o], a[o + 1], a[o + 2]);
+    bodies[b].quaternion.set(a[o + 3], a[o + 4], a[o + 5], a[o + 6]);
+  }
+  const i0 = C.offsets[frame], i1 = C.offsets[frame + 1];
+  const sums = C.pairs.map(() => 0);
+  let n = 0; shown = [];
+  for (let i = i0; i < i1; i++) {
+    const pi = C.pair[i];
+    sums[pi] += C.fn[i];
+    if (!pairOn[pi]) continue;
+    const f = C.fn[i], r = 0.0018 + 0.0055 * Math.sqrt(Math.min(1, f / cmax));
+    P.set(C.pos[3 * i], C.pos[3 * i + 1], C.pos[3 * i + 2]);
+    M.compose(P, Q.identity(), S.set(r, r, r));
+    dots.setMatrixAt(n, M);
+    const [cr, cg, cb] = turbo(f / cmax);
+    dots.instanceColor.setXYZ(n, cr, cg, cb);
+    const L = OPT.arrow * f;
+    arrowPos.set([P.x, P.y, P.z, P.x + C.nrm[3 * i] * L, P.y + C.nrm[3 * i + 1] * L, P.z + C.nrm[3 * i + 2] * L], n * 6);
+    shown.push(i); n++;
+  }
+  dots.count = n;
+  dots.instanceMatrix.needsUpdate = true; dots.instanceColor.needsUpdate = true;
+  arrowGeo.setDrawRange(0, OPT.arrow > 0 ? n * 2 : 0);
+  arrowGeo.attributes.position.needsUpdate = true;
+  sums.forEach((s, i) => sumSpans[i].textContent = s > 0 ? s.toFixed(1) + " N" : "");
+  curSums = sums;
+  tlabel.textContent = `t = ${D.t[frame].toFixed(2)} s · 第 ${frame + 1} / ${N} 格 · ${i1 - i0} 個接觸點`;
+}
+slider.oninput = () => setFrame(+slider.value);
+
+// ---------------------------------------------------------------- playback
+let playing = false, last = 0, acc = 0;
+const playBtn = document.getElementById("play"), speedSel = document.getElementById("speed");
+function togglePlay() { playing = !playing; playBtn.textContent = playing ? "⏸" : "▶"; last = performance.now(); acc = 0;
+  if (playing && frame >= N - 1) setFrame(0); }
+playBtn.onclick = togglePlay;
+document.getElementById("prev").onclick = () => setFrame(frame - 1);
+document.getElementById("next").onclick = () => setFrame(frame + 1);
+
+// ---------------------------------------------------------------- recording
+// The WebGL canvas is copied, with the time and the forces drawn over it, onto a 2-D canvas right after each
+// render (same task, so no preserveDrawingBuffer is needed); that canvas is what MediaRecorder films.
+const recBtn = document.getElementById("rec");
+let rec = null;  // { mr, chunks, cv, ctx, track, t0, f0, start }
+function pickMime() {
+  const c = ["video/mp4;codecs=avc1.640028", "video/mp4", "video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  return c.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+}
+function startLive() {
+  if (!window.MediaRecorder) { alert("這個瀏覽器不支援錄影（MediaRecorder）。請用 Chrome / Edge / Firefox。"); return; }
+  const src = renderer.domElement;
+  const cv = document.createElement("canvas");
+  cv.width = src.width & ~1; cv.height = src.height & ~1;  // H.264 wants even sizes
+  const ctx = cv.getContext("2d");
+  const stream = cv.captureStream(0);
+  const mime = pickMime();
+  let mr;
+  try { mr = new MediaRecorder(stream, { mimeType: mime || undefined, videoBitsPerSecond: 12e6 }); }
+  catch (e) { alert("無法開始錄影：" + e.message); return; }
+  if (frame >= N - 1) setFrame(0);
+  rec = { mr, chunks: [], cv, ctx, track: stream.getVideoTracks()[0], f0: frame, start: performance.now(), mime: mr.mimeType || mime };
+  mr.ondataavailable = e => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+  mr.onstop = () => saveRec(rec);
+  mr.start(1000);
+  recBtn.classList.add("on");
+  if (!playing) togglePlay();
+}
+function stopRec() {
+  if (!rec || rec.stopping) return;
+  rec.stopping = true; rec.f1 = frame;
+  if (rec.mr.state !== "inactive") rec.mr.stop();
+  recBtn.classList.remove("on"); recBtn.textContent = "⏺ 錄影";
+}
+function saveRec(r) {
+  rec = null;
+  const type = (r.mime || "video/webm").split(";")[0];
+  const blob = new Blob(r.chunks, { type });
+  if (!blob.size) { alert("錄影沒有內容。"); return; }
+  const safe = String(D.id || "rssviz").replace(/[^\w.-]+/g, "_");
+  const name = `${safe}_t${D.t[r.f0].toFixed(2)}-${D.t[r.f1 ?? frame].toFixed(2)}s.${type.includes("mp4") ? "mp4" : "webm"}`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+recBtn.onclick = () => { if (rec) stopRec(); else if (exp) exp.abort = true; else startExport(); };
+function drawOverlay(cv, ctx) {
+  const W = cv.width, H = cv.height, s = W / Math.max(1, wrap.clientWidth);
+  ctx.drawImage(renderer.domElement, 0, 0, W, H);
+  ctx.font = `${13 * s}px system-ui,"Noto Sans TC","Microsoft JhengHei",sans-serif`;
+  ctx.textBaseline = "top";
+  const pad = 8 * s, lh = 18 * s;
+  // forces of the pairs that are shown, top left
+  const lines = C.pairs.map((p, i) => [p, curSums[i] || 0, i]).filter(([, v, i]) => pairOn[i] && v > 0);
+  if (lines.length) {
+    const tw = Math.max(...lines.map(([p, v]) => ctx.measureText(`${p}   ${v.toFixed(1)} N`).width));
+    ctx.fillStyle = "rgba(20,22,27,.8)"; ctx.fillRect(pad, pad, tw + 2 * pad, lines.length * lh + 1.4 * pad);
+    lines.forEach(([p, v], j) => {
+      ctx.fillStyle = "#e6e6e6"; ctx.fillText(p, 2 * pad, 1.7 * pad + j * lh);
+      const t = `${v.toFixed(1)} N`; ctx.fillStyle = "#ffb199"; ctx.fillText(t, pad + tw + pad - ctx.measureText(t).width, 1.7 * pad + j * lh);
+    });
+  }
+  // colour bar, top right
+  const bw = 150 * s, bx = W - bw - 2 * pad, by = pad;
+  ctx.fillStyle = "rgba(20,22,27,.8)"; ctx.fillRect(bx - pad, by, bw + 2 * pad, 52 * s);
+  ctx.fillStyle = "#9aa0aa"; ctx.fillText("單點法向力 [N]", bx, by + 5 * s);
+  const g = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+  for (let x = 0; x <= 1.0001; x += 0.1) { const [r, gg, b] = turbo(x); g.addColorStop(Math.min(1, x), `rgb(${r * 255 | 0},${gg * 255 | 0},${b * 255 | 0})`); }
+  ctx.fillStyle = g; ctx.fillRect(bx, by + 24 * s, bw, 9 * s);
+  ctx.fillStyle = "#9aa0aa"; ctx.fillText("0", bx, by + 35 * s);
+  const mx = cmax.toFixed(1); ctx.fillText(mx, bx + bw - ctx.measureText(mx).width, by + 35 * s);
+  // time, bottom left
+  const tl = tlabel.textContent, tw2 = ctx.measureText(tl).width;
+  ctx.fillStyle = "rgba(20,22,27,.8)"; ctx.fillRect(pad, H - lh - 2 * pad, tw2 + 2 * pad, lh + pad);
+  ctx.fillStyle = "#e6e6e6"; ctx.fillText(tl, 2 * pad, H - lh - 1.3 * pad);
+}
+
+// The MP4 export: every frame rendered on purpose, encoded by WebCodecs and muxed by mp4-muxer into an ordinary
+// (non-fragmented, moov first, constant 30 fps, at most 1920x1080) MP4 that PowerPoint and Keynote take. What
+// MediaRecorder writes is a fragmented MP4 whose header says it lasts 0 s, which PowerPoint refuses; it is kept
+// only as the fallback for a browser without WebCodecs.
+const FPS = 30, MUX_URL = "https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.mjs";
+let exp = null;
+function outSize() {
+  const src = renderer.domElement, k = Math.min(1, 1920 / src.width, 1080 / src.height);
+  return [Math.max(2, Math.round(src.width * k) & ~1), Math.max(2, Math.round(src.height * k) & ~1)];
+}
+async function pickAvc(w, h) {
+  for (const codec of ["avc1.640028", "avc1.4d0028", "avc1.42e028"]) {  // High / Main / Baseline, level 4.0 (1080p)
+    const cfg = { codec, width: w, height: h, bitrate: 10e6, framerate: FPS, avc: { format: "avc" } };
+    try { if ((await VideoEncoder.isConfigSupported(cfg)).supported) return cfg; } catch (e) {}
+  }
+  return null;
+}
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+const tick = ms => new Promise(r => setTimeout(r, ms));
+async function startExport() {
+  exp = { abort: false };
+  recBtn.classList.add("on"); recBtn.textContent = "⏹ 準備中";
+  let mod = null, cfg = null;
+  const [W, H] = outSize();
+  try { if (window.VideoEncoder && window.VideoFrame) { mod = await import(MUX_URL); cfg = await pickAvc(W, H); } } catch (e) { mod = null; }
+  if (!mod || !cfg) {
+    exp = null; recBtn.classList.remove("on"); recBtn.textContent = "⏺ 錄影";
+    if (confirm("這個瀏覽器無法直接輸出 MP4（需要 Chrome / Edge 94 以上，並能連到 cdn.jsdelivr.net）。\n" +
+                "改用即時錄影？錄出的檔案要先轉檔才能放進 PowerPoint。")) startLive();
+    return;
+  }
+  if (playing) togglePlay();
+  const f0 = frame >= N - 1 ? 0 : frame, dt = (+speedSel.value) / FPS;
+  const t0 = D.t[f0], total = Math.max(1, Math.floor((D.t[N - 1] - t0) / dt + 1e-9) + 1);
+  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  const ctx = cv.getContext("2d");
+  const muxer = new mod.Muxer({ target: new mod.ArrayBufferTarget(), fastStart: "in-memory",
+                                video: { codec: "avc", width: W, height: H, frameRate: FPS } });
+  let err = null, k = f0, i = 0;
+  const enc = new VideoEncoder({ output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), error: e => { err = e; } });
+  try {
+    enc.configure(cfg);
+    for (; i < total && !exp.abort && !err; i++) {
+      const t = t0 + i * dt;
+      while (k < N - 1 && D.t[k + 1] <= t + 1e-9) k++;
+      setFrame(k); controls.update(); renderer.render(scene, camera);
+      drawOverlay(cv, ctx);  // same task as the render: the WebGL buffer is still there
+      const vf = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
+      enc.encode(vf, { keyFrame: i % (2 * FPS) === 0 }); vf.close();
+      recBtn.textContent = `⏹ ${Math.floor(100 * (i + 1) / total)}%`;
+      if (i % 4 === 3) await tick(0);  // let the page breathe: the button, the camera
+      while (enc.encodeQueueSize > 6 && !err) await tick(4);
+    }
+    await enc.flush();
+    if (err) throw err;
+    if (i === 0) throw new Error("沒有任何畫面");
+    muxer.finalize();
+    const safe = String(D.id || "rssviz").replace(/[^\w.-]+/g, "_");
+    download(new Blob([muxer.target.buffer], { type: "video/mp4" }), `${safe}_t${t0.toFixed(2)}-${D.t[k].toFixed(2)}s.mp4`);
+  } catch (e) {
+    alert("輸出影片失敗：" + ((e && e.message) || e));
+  } finally {
+    try { enc.close(); } catch (e) {}
+    exp = null; recBtn.classList.remove("on"); recBtn.textContent = "⏺ 錄影";
+  }
+}
+
+// ---------------------------------------------------------------- camera
+const KEY = "rssviz-cam-" + D.id;
+let saveT = 0;
+function saveCam() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => { try { localStorage.setItem(KEY, JSON.stringify({ p: camera.position.toArray(), t: controls.target.toArray() })); } catch (e) {} }, 200);
+}
+controls.addEventListener("change", saveCam);
+function focusBox() {
+  if (D.focus) { const [lo, hi] = D.focus; return new THREE.Box3(new THREE.Vector3(...lo), new THREE.Vector3(...hi)); }
+  return sceneBoxNow();
+}
+function sceneBoxNow() { const b = new THREE.Box3(); for (const g in groupObjs) for (const m of groupObjs[g]) if (m.visible) b.expandByObject(m); return b; }
+function fit(box, dir) {
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+  const r = Math.max(0.06, s.length() / 2) * 1.15;
+  const d = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
+  dir = (dir || camera.position.clone().sub(controls.target)).normalize();
+  controls.target.copy(c);
+  camera.position.copy(c).addScaledVector(dir, d);
+  controls.update(); saveCam();
+}
+const VIEWS = { front: [1, 0, 0.25], side: [0, -1, 0.25], top: [0.0001, -0.0001, 1], iso: [0.8, -0.9, 0.7] };
+function view(name) { fit(focusBox(), new THREE.Vector3(...VIEWS[name])); }
+function pan(dx, dy) {
+  const off = camera.position.clone().sub(controls.target), dist = off.length() * 0.12;
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+  const v = right.multiplyScalar(dx * dist).add(up.multiplyScalar(dy * dist));
+  camera.position.add(v); controls.target.add(v); controls.update(); saveCam();
+}
+function dolly(f) { const off = camera.position.clone().sub(controls.target).multiplyScalar(f); camera.position.copy(controls.target).add(off); controls.update(); saveCam(); }
+function orbit(az, el) {
+  const off = camera.position.clone().sub(controls.target);
+  const sph = new THREE.Spherical().setFromVector3(new THREE.Vector3(off.x, off.y, off.z).applyAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
+  sph.theta += az; sph.phi = Math.min(Math.PI - 0.01, Math.max(0.01, sph.phi + el));
+  const v = new THREE.Vector3().setFromSpherical(sph).applyAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+  camera.position.copy(controls.target).add(v); controls.update(); saveCam();
+}
+const step = THREE.MathUtils.degToRad(15);
+const ACT = { in: () => dolly(0.8), out: () => dolly(1.25), rotl: () => orbit(-step, 0), rotr: () => orbit(step, 0),
+  tiltu: () => orbit(0, -step), tiltd: () => orbit(0, step), focus: () => fit(focusBox()), all: () => fit(sceneBoxNow()) };
+const PAN = { up: [0, 1], down: [0, -1], left: [-1, 0], right: [1, 0] };
+document.querySelectorAll("[data-pan]").forEach(b => b.onclick = () => pan(...PAN[b.dataset.pan]));
+document.querySelectorAll("[data-act]").forEach(b => b.onclick = () => ACT[b.dataset.act]());
+document.querySelectorAll("[data-view]").forEach(b => b.onclick = () => view(b.dataset.view));
+wrap.addEventListener("pointerdown", () => wrap.focus());
+wrap.addEventListener("keydown", e => {
+  const k = e.key;
+  const map = { ArrowUp: () => pan(0, 1), ArrowDown: () => pan(0, -1), ArrowLeft: () => pan(-1, 0), ArrowRight: () => pan(1, 0),
+    w: ACT.in, s: ACT.out, "+": ACT.in, "=": ACT.in, "-": ACT.out, q: ACT.rotl, e: ACT.rotr, r: ACT.tiltu, f: ACT.tiltd,
+    c: ACT.focus, v: () => recBtn.click(), " ": togglePlay, ",": () => setFrame(frame - 1), ".": () => setFrame(frame + 1) };
+  const fn = map[k] || map[k.toLowerCase()];
+  if (fn && !["SELECT", "INPUT"].includes(e.target.tagName)) { fn(); e.preventDefault(); }
+});
+
+// ---------------------------------------------------------------- hover
+const tip = document.getElementById("tip"), ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+renderer.domElement.addEventListener("pointermove", e => {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const hit = ray.intersectObject(dots)[0];
+  if (hit && hit.instanceId !== undefined && shown[hit.instanceId] !== undefined) {
+    const i = shown[hit.instanceId];
+    tip.innerHTML = `<b>${C.points[C.point[i]]}</b><br>${C.pairs[C.pair[i]]}<br>法向力 ${C.fn[i].toFixed(2)} N · 摩擦力 ${C.ft[i].toFixed(2)} N<br>穿入 ${(-Math.min(0, C.depth[i])).toFixed(3)} mm`;
+    tip.style.display = "block"; tip.style.left = (e.clientX - r.left + 14) + "px"; tip.style.top = (e.clientY - r.top + 10) + "px";
+  } else tip.style.display = "none";
+});
+
+// ---------------------------------------------------------------- start
+function resize() { const w = wrap.clientWidth, h = wrap.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+window.addEventListener("resize", resize); resize();
+let restored = false;
+try { const s = JSON.parse(localStorage.getItem(KEY) || "null"); if (s) { camera.position.fromArray(s.p); controls.target.fromArray(s.t); controls.update(); restored = true; } } catch (e) {}
+setFrame(Math.min(N - 1, OPT.start || 0));
+if (!restored) view("iso");
+function loop(now) {
+  requestAnimationFrame(loop);
+  if (playing) {
+    acc += (now - last) / 1000 * (+speedSel.value); last = now;
+    while (frame < N - 1 && acc >= D.t[frame + 1] - D.t[frame]) { acc -= D.t[frame + 1] - D.t[frame]; frame++; }
+    setFrame(frame);
+    if (frame >= N - 1) togglePlay();
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  if (rec && !rec.stopping) {  // the live fallback
+    drawOverlay(rec.cv, rec.ctx);
+    rec.track.requestFrame && rec.track.requestFrame();
+    const sec = Math.floor((now - rec.start) / 1000);
+    recBtn.textContent = `⏹ ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    if (!playing && frame >= N - 1) stopRec();  // played to the end
+  }
+}
+requestAnimationFrame(loop);
+</script>
+<script>setTimeout(() => { if (!window.THREE_OK && !document.querySelector("canvas")) document.getElementById("err").style.display = "block"; }, 6000);</script>
+</body>
+</html>
