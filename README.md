@@ -59,7 +59,7 @@ conda run -n expviz pip install -r requirements.txt
 ~/rssviz/run.sh <twins 資料夾> 8503  # 指定資料夾和 port
 ```
 
-啟動後打開 http://localhost:8502。
+啟動後打開 http://localhost:8502
 要讓同一個網段的其他電腦連進來，啟動前先設 `RSSVIZ_ADDR=0.0.0.0`。
 
 ## 分頁
